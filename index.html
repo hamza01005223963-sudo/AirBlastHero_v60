@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Air Blast Hero</title>
+<meta name="description" content="Air Blast Hero - لعبة أكشن 2D من SEBOVA STUDIOS">
+<meta name="theme-color" content="#05070d">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<script>
+// Safety net: if an OLD service worker from a previous version is still
+// controlling this page, it can keep serving a stale cached copy forever
+// even after we ship fixes. Force-clear any old registrations + caches
+// once, then reload, so every visit is guaranteed to run the latest code.
+(function () {
+  if (sessionStorage.getItem("abh_sw_cleared_v1")) return;
+  if (!("serviceWorker" in navigator)) return;
+  Promise.all([
+    navigator.serviceWorker.getRegistrations().then((regs) =>
+      Promise.all(regs.map((r) => r.unregister()))
+    ),
+    (window.caches ? caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))) : Promise.resolve())
+  ]).then(() => {
+    sessionStorage.setItem("abh_sw_cleared_v1", "1");
+    location.reload();
+  }).catch(() => {});
+})();
+// Auto-detect touch capability so the on-screen joystick/action buttons
+// only show on touch devices (mobile/tablet) and stay hidden on a
+// computer with mouse+keyboard. Runs before the body paints, so there's
+// no flash of controls that immediately appear/disappear.
+(function () {
+  var hasTouch = ("ontouchstart" in window) ||
+    (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
+    (window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+  document.documentElement.classList.add(hasTouch ? "has-touch" : "no-touch");
+})();
+</script>
+</head>
+<body>
+<div id="gameContainer">
+  <canvas id="gameCanvas"></canvas>
+  <!-- PHASE 15 — Network Debug Mode. Hidden unless ?debug=1 is in the
+       URL (see game.js). Not part of normal play, no gameplay hookup. -->
+  <div id="netDebugPanel" class="hidden" style="position:fixed;top:6px;left:6px;z-index:9999;background:rgba(0,0,0,0.72);color:#5cff8a;font-family:monospace;font-size:11px;line-height:1.5;padding:8px 10px;border-radius:6px;pointer-events:none;white-space:pre;direction:ltr;text-align:left;max-width:60vw;"></div>
+  <div id="flashOverlay"></div>
+  <div id="transitionOverlay"></div>
+  <div id="connCheckOverlay" class="hidden">
+    <img id="connCheckImg" src="" alt="">
+    <p id="connCheckText" class="hidden"></p>
+  </div>
+  <div id="hellVignette"></div>
+  <div id="floatingTextLayer"></div>
+  <div id="tutorialHint"></div>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div id="statsWrap">
+      <div id="healthWrap">
+        <div id="healthBar"><div id="healthFill"></div></div>
+        <div id="healthText">100/100</div>
+      </div>
+      <div id="energyWrap">
+        <div id="energyBar"><div id="energyFill"></div></div>
+        <div id="energyText">⚡ 100</div>
+      </div>
+    </div>
+    <div id="centerStats">
+      <div id="levelIndicator">المرحلة 1/30</div>
+      <div id="statsRow">
+        <div id="scoreIndicator">🏆 0</div>
+        <div id="gemIndicator">💎 0/0</div>
+      </div>
+      <div id="comboIndicator" class="hidden"></div>
+      <div id="timeAttackTimer" class="hidden"></div>
+      <div id="survivalWaveIndicator" class="hidden"></div>
+    </div>
+    <button id="pauseBtn" class="iconBtn">⏸</button>
+  </div>
+
+  <div id="mpPingIndicator" class="hidden">
+    <span id="mpPingDot" class="mpPingDot"></span>
+    <span id="mpPingText">...</span>
+  </div>
+
+  <div id="versusHud" class="hidden">
+    <div class="versusSide versusMe">
+      <div class="versusLabel">أنا</div>
+      <div class="versusBarWrap"><div id="versusMeFill" class="versusBarFill"></div></div>
+    </div>
+    <div id="versusRoundPips" class="versusRoundPips"></div>
+    <div class="versusSide versusPeer">
+      <div class="versusBarWrap"><div id="versusPeerFill" class="versusBarFill versusBarFillPeer"></div></div>
+      <div class="versusLabel">الخصم</div>
+    </div>
+  </div>
+
+  <div id="coopHud" class="hidden">
+    <div id="coopWaveText" class="coopHudLine">🌊 الموجة 1/5</div>
+    <div id="coopEnemiesText" class="coopHudLine">👾 متبقي: 0</div>
+    <div id="coopDownWrap" class="hidden">
+      <div class="coopDownLabel">لقد سقطت! استنى صاحبك يوصلك 🆘</div>
+      <div class="coopReviveBarWrap"><div id="coopReviveFill" class="coopReviveBarFill"></div></div>
+    </div>
+  </div>
+
+  <div id="ffaHud" class="hidden">
+    <div id="ffaAliveText" class="coopHudLine">⚔️ الباقيين: 0/0</div>
+  </div>
+
+  <div id="raceHud" class="hidden">
+    <div id="raceRankText" class="coopHudLine">🏁 جاري السباق...</div>
+    <div id="raceStandingList" class="raceStandingList"></div>
+  </div>
+
+  <div id="bossRushHud" class="hidden">
+    <div id="bossRushText" class="coopHudLine">👹 الزعيم 1/3</div>
+  </div>
+
+  <div id="huntedHud" class="hidden">
+    <div id="huntedStatusText" class="coopHudLine">🎯 المطارَد</div>
+  </div>
+
+  <div id="mpEmoteWrap" class="hidden">
+    <div id="mpEmotePanel" class="hidden">
+      <button class="mpEmoteBtn" data-emote="wave">👋</button>
+      <button class="mpEmoteBtn" data-emote="like">👍</button>
+      <button class="mpEmoteBtn" data-emote="laugh">😂</button>
+      <button class="mpEmoteBtn" data-emote="help">🆘</button>
+      <button class="mpEmoteBtn" data-emote="here">📍</button>
+      <button class="mpEmoteBtn" data-emote="gg">🎉</button>
+    </div>
+    <button id="mpEmoteToggleBtn" class="iconBtn">😊</button>
+  </div>
+
+  <div id="bossBarWrap" class="hidden">
+    <div id="bossName">الزعيم</div>
+    <div id="bossBar"><div id="bossFill"></div></div>
+    <div id="bossPhaseText"></div>
+  </div>
+
+  <!-- Controls -->
+  <div id="controls">
+    <div id="joystickZone">
+      <div id="joystickBase">
+        <div id="joystickThumb"></div>
+      </div>
+    </div>
+    <div id="actionButtons">
+      <button id="pulseBtn" class="actionBtn pulseBtn">
+        <span class="btnLabel">⚡<br>رشاش</span>
+      </button>
+      <button id="blastBtn" class="actionBtn blastBtn">
+        <span class="btnLabel">💨<br>Air Blast</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Screens -->
+  <div id="menuScreen" class="screen">
+    <div class="screenPanel">
+      <h1>AIR BLAST HERO</h1>
+      <p class="subtitle">لا قفز... فقط اندفاع هوائي</p>
+      <button class="menuBtn" id="startBtn">ابدأ اللعبة</button>
+      <button class="menuBtn secondary" id="upgradesBtn">⭐ الترقيات</button>
+      <div class="menuRow">
+        <button class="infoBtn" id="infoBtn">ℹ️ معلومات اللعبة</button>
+        <button class="infoBtn" id="settingsBtn">⚙️ الإعدادات</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modeSelectScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h1>اختار عايز تلعب إزاي</h1>
+      <p class="subtitle">فردي، ولا مع صحابك؟</p>
+      <div class="modeGrid">
+        <button class="modeGridBtn primary" id="modeStoryBtn"><span class="modeIcon">🎮</span><span class="modeLabel">لعب فردي (قصة)</span></button>
+        <button class="modeGridBtn" id="singModeBtn"><span class="modeIcon">🎤</span><span class="modeLabel">غنيها يا معلم</span></button>
+        <button class="modeGridBtn" id="continueBtn"><span class="modeIcon">▶️</span><span class="modeLabel">استكمال - المرحلة <span id="continueLevelNum"></span></span></button>
+        <button class="modeGridBtn" id="levelSelectBtn"><span class="modeIcon">🗺️</span><span class="modeLabel">اختيار المرحلة</span></button>
+        <button class="modeGridBtn hidden" id="timeAttackBtn"><span class="modeIcon">⏱️</span><span class="modeLabel">تحدي الوقت</span></button>
+        <button class="modeGridBtn" id="survivalBtn"><span class="modeIcon">🌊</span><span class="modeLabel">وضع البقاء</span></button>
+        <button class="modeGridBtn" id="multiplayerBtn"><span class="modeIcon">⚔️</span><span class="modeLabel">مواجهة 1×1 (من غير إنترنت)</span></button>
+        <button class="modeGridBtn" id="mpRoomsBtn"><span class="modeIcon">🌍</span><span class="modeLabel">غرف اللاعبين (حتى 20)</span></button>
+      </div>
+      <button class="menuBtn secondary" id="modeBackBtn">🔙 رجوع</button>
+    </div>
+  </div>
+
+  <div id="singScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h1>🎤 غنيها يا معلم</h1>
+      <p class="subtitle">اختار أغنية من جهازك، واللعبة تولّدلك موجات أعداء على إيقاعها</p>
+      <input type="file" id="singFileInput" accept="audio/*" class="hidden">
+      <button class="menuBtn" id="singPickBtn">🎵 اختار أغنية من جهازك</button>
+      <p class="subtitle" id="singStatusText"></p>
+      <button class="menuBtn hidden" id="singStartBtn">▶️ ابدأ</button>
+      <button class="menuBtn secondary" id="singBackBtn">🔙 رجوع</button>
+    </div>
+  </div>
+
+  <div id="singResultScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h2>🎶 خلصت الأغنية!</h2>
+      <p class="subtitle" id="singResultText"></p>
+      <button class="menuBtn" id="singResultBackBtn">رجوع للقائمة</button>
+    </div>
+  </div>
+
+
+  <div id="timeAttackResultScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h2>⏱️ نتيجة تحدي الوقت</h2>
+      <p class="subtitle" id="timeAttackResultText"></p>
+      <button class="menuBtn" id="timeAttackRetryBtn">إعادة المحاولة</button>
+      <button class="menuBtn secondary" id="timeAttackBackBtn">رجوع للقائمة</button>
+    </div>
+  </div>
+
+  <div id="survivalResultScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h2>🌊 انتهى وضع البقاء</h2>
+      <p class="subtitle" id="survivalResultText"></p>
+      <button class="menuBtn" id="survivalRetryBtn">إعادة المحاولة</button>
+      <button class="menuBtn secondary" id="survivalBackBtn">رجوع للقائمة</button>
+    </div>
+  </div>
+
+  <div id="upgradesScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h2>⭐ الترقيات الدائمة</h2>
+      <p class="subtitle" id="upgradePointsText">نقاط الترقية: 0</p>
+      <div id="upgradesList"></div>
+      <button class="menuBtn secondary" id="closeUpgradesBtn">رجوع</button>
+    </div>
+  </div>
+
+  <div id="mpRoomScreen" class="screen hidden">
+    <div class="screenPanel mpRoomPanel">
+      <h2>🌍 غرف اللاعبين</h2>
+      <p class="subtitle">انت مش متصل بالانترنت يا عمي🙂🙂</p>
+      <img src="offline-guy.png" alt="" class="offlineGuyImg">
+
+      <div id="mpRoomJoinBox">
+        <input type="text" id="mpNickInput" class="mpTextInput" placeholder="اسمك في اللعبة" maxlength="14">
+        <label class="mpPrivateToggle" for="mpPrivateRoomChk">
+          <input type="checkbox" id="mpPrivateRoomChk">
+          غرفة خاصة (تدخل بالكود بس - مش هتظهر في قايمة الغرف)
+        </label>
+        <div class="mpRoleRow">
+          <button class="menuBtn" id="mpCreateRoomBtn">إنشاء غرفة جديدة</button>
+        </div>
+        <p class="mpSectionLabel">أو انضم لغرفة بكود:</p>
+        <div class="mpRoleRow">
+          <input type="text" id="mpJoinCodeInput" class="mpTextInput mpCodeInput" placeholder="كود الغرفة" maxlength="5">
+          <button class="menuBtn secondary" id="mpJoinRoomBtn">انضمام</button>
+        </div>
+        <p class="mpSectionLabel">أو اختار غرفة عامة فاضية:</p>
+        <div id="mpPublicRoomList" class="mpPublicRoomList">
+          <p class="mpPublicRoomEmpty">جاري البحث عن غرف...</p>
+        </div>
+        <p id="mpRoomStatusText" class="mpStatus"></p>
+      </div>
+
+      <div id="mpRoomInsideBox" class="hidden">
+        <div class="mpRoomCodeDisplay">
+          كود الغرفة: <span id="mpRoomCodeShown">-----</span>
+          <button class="mpSmallCopyBtn" id="mpCopyRoomCodeBtn">📋</button>
+        </div>
+
+        <p class="mpSectionLabel">اللاعبين (<span id="mpPlayerCount">0</span>/20):</p>
+        <div id="mpPlayerList" class="mpPlayerList"></div>
+
+        <p class="mpSectionLabel">اختار الساحة:</p>
+        <div id="mpArenaGrid" class="mpArenaGrid"></div>
+        <p id="mpArenaHint" class="mpArenaHint"></p>
+
+        <div class="mpRoleRow">
+          <button class="menuBtn secondary" id="mpReadyBtn">جاهز ✅</button>
+          <button class="menuBtn" id="mpStartRoomBtn">ابدأ الماتش</button>
+        </div>
+        <p id="mpRoomStatusText2" class="mpStatus"></p>
+        <button class="menuBtn secondary" id="mpLeaveRoomBtn">مغادرة الغرفة</button>
+      </div>
+
+      <button class="menuBtn secondary" id="mpRoomBackBtn">رجوع</button>
+    </div>
+  </div>
+
+  <div id="mpLobbyScreen" class="screen hidden">
+    <div class="screenPanel">
+      <img src="mp-icon.png" alt="" class="mpLogo">
+      <h2>⚔️ مواجهة 1×1 مباشرة</h2>
+      <p class="subtitle">اتصال مباشر بين جهازين - من غير سيرفر أو إنترنت وسيط</p>
+
+      <div id="mpModeSelect" class="hidden">
+        <p class="mpSectionLabel">اختار الوضع:</p>
+        <div class="mpModeGrid">
+          <button class="mpModeBtn" data-mode="versus">⚔️<br>مواجهة 1×1</button>
+          <button class="mpModeBtn" data-mode="coop">🤝<br>تعاوني ضد الموجات</button>
+        </div>
+      </div>
+
+      <div id="mpRoleSelect" class="hidden">
+        <p class="mpSectionLabel">أنت هتكون:</p>
+        <div class="mpRoleRow">
+          <button class="menuBtn" id="mpHostBtn">استضافة (Host)</button>
+          <button class="menuBtn secondary" id="mpJoinBtn">انضمام (Join)</button>
+        </div>
+      </div>
+
+      <!-- HOST FLOW -->
+      <div id="mpHostFlow" class="hidden mpFlow">
+        <p class="mpStep">1️⃣ ابعت الكود ده لصاحبك:</p>
+        <textarea id="mpHostOfferCode" class="mpCodeBox" readonly placeholder="جاري توليد الكود..."></textarea>
+        <button class="menuBtn secondary mpSmallBtn" id="mpCopyOfferBtn">📋 نسخ الكود</button>
+        <p class="mpStep">2️⃣ الصق الكود اللي هيرجعلك من صاحبك:</p>
+        <textarea id="mpHostAnswerInput" class="mpCodeBox" placeholder="الصق كود الرد هنا..."></textarea>
+        <button class="menuBtn mpSmallBtn" id="mpConnectHostBtn">🔗 اتصال</button>
+      </div>
+
+      <!-- JOIN FLOW -->
+      <div id="mpJoinFlow" class="hidden mpFlow">
+        <p class="mpStep">1️⃣ الصق الكود اللي جالك من صاحبك:</p>
+        <textarea id="mpJoinOfferInput" class="mpCodeBox" placeholder="الصق كود الاستضافة هنا..."></textarea>
+        <button class="menuBtn mpSmallBtn" id="mpGenerateAnswerBtn">توليد كود الرد</button>
+        <p class="mpStep">2️⃣ ابعت كود الرد ده لصاحبك يلزقه عنده:</p>
+        <textarea id="mpJoinAnswerCode" class="mpCodeBox" readonly placeholder="هيظهر هنا بعد الخطوة اللي فوق"></textarea>
+        <button class="menuBtn secondary mpSmallBtn" id="mpCopyAnswerBtn">📋 نسخ الكود</button>
+      </div>
+
+      <p id="mpStatusText" class="mpStatus"></p>
+      <button class="menuBtn secondary" id="mpBackBtn">رجوع</button>
+    </div>
+  </div>
+
+  <div id="levelSelectScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h2>اختيار المرحلة</h2>
+      <div id="levelGrid"></div>
+      <button class="menuBtn secondary" id="closeLevelSelectBtn">رجوع</button>
+    </div>
+  </div>
+
+  <div id="settingsScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h2>الإعدادات</h2>
+      <div class="settingsRow">
+        <span>🔊 الصوت</span>
+        <button class="toggleBtn" id="soundToggleBtn"></button>
+      </div>
+      <div class="settingsRow">
+        <span>📳 الاهتزاز</span>
+        <button class="toggleBtn" id="vibrationToggleBtn"></button>
+      </div>
+      <div class="settingsRow" id="skinSettingsRow"></div>
+      <div class="settingsRow" id="trailSkinSettingsRow" style="flex-direction:column;align-items:flex-start;gap:8px;"></div>
+      <button class="menuBtn secondary" id="closeSettingsBtn">رجوع</button>
+    </div>
+  </div>
+
+  <div id="infoScreen" class="screen hidden">
+    <div class="screenPanel">
+      <div class="studioLogo">🕊️</div>
+      <h2>SEBOVA STUDIOS</h2>
+      <p class="subtitle">أوبيتو</p>
+      <div class="howto">
+        <p><strong>اللعبة:</strong> Air Blast Hero</p>
+        <p><strong>النوع:</strong> أكشن منصات 2D</p>
+        <p><strong>المراحل:</strong> 30 مرحلة + زعيم نهائي بـ5 مراحل قتال</p>
+        <p><strong>الإصدار:</strong> 2.0.0</p>
+      </div>
+      <button class="menuBtn secondary" id="closeInfoBtn">رجوع</button>
+    </div>
+  </div>
+
+  <div id="pauseScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h2>إيقاف مؤقت</h2>
+      <p id="pauseScoreText" class="subtitle"></p>
+      <button class="menuBtn" id="resumeBtn">استئناف</button>
+      <button class="menuBtn secondary" id="restartFromPauseBtn">إعادة المرحلة</button>
+      <button class="menuBtn secondary" id="settingsFromPauseBtn">⚙️ الإعدادات</button>
+      <button class="menuBtn secondary" id="menuFromPauseBtn">القائمة الرئيسية</button>
+    </div>
+  </div>
+
+  <div id="gameOverScreen" class="screen hidden">
+    <div class="screenPanel">
+      <img id="gameOverImg" src="" alt="" style="width:96px;height:96px;object-fit:cover;border-radius:10px;display:block;margin:0 auto 10px;">
+      <h2 class="gameOverTitle">انت مت!</h2>
+      <p id="gameOverLevelText"></p>
+      <p id="gameOverScoreText"></p>
+      <button class="menuBtn" id="retryBtn">إعادة المحاولة</button>
+      <button class="menuBtn secondary" id="menuFromGameOverBtn">القائمة الرئيسية</button>
+    </div>
+  </div>
+
+  <div id="victoryScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h2 class="victoryTitle">🏆 لقد فزت! 🏆</h2>
+      <p>لقد هزمت الزعيم النهائي وأنقذت العالم</p>
+      <p id="victoryMedalText"></p>
+      <p id="victoryGemsText"></p>
+      <p id="victoryScoreText"></p>
+      <p id="victoryPerfectRunText" style="color:#a78bfa;font-weight:bold;"></p>
+      <p id="victoryGhostText" style="color:#c9c9ff;font-weight:bold;"></p>
+      <p id="victorySkinUnlock" style="color:#ffd166;font-weight:bold;"></p>
+      <button class="menuBtn" id="playAgainBtn">اللعب مرة أخرى</button>
+      <button class="menuBtn secondary" id="menuFromVictoryBtn">القائمة الرئيسية</button>
+    </div>
+  </div>
+
+  <div id="levelCompleteScreen" class="screen hidden">
+    <div class="screenPanel">
+      <h2>✅ اجتزت المرحلة!</h2>
+      <p id="levelCompleteText"></p>
+      <p id="levelCompleteScoreText"></p>
+      <p id="medalText" style="font-size:20px;"></p>
+      <p id="perfectRunText" style="color:#a78bfa;font-weight:bold;"></p>
+      <p id="ghostRecordText" style="color:#c9c9ff;font-weight:bold;"></p>
+      <button class="menuBtn" id="nextLevelBtn">المرحلة التالية</button>
+    </div>
+  </div>
+</div>
+
+<script src="mp.js"></script>
+<script src="mp-room-net.js"></script>
+<script src="game.js"></script>
+<script>
+// Connection-check splash: shown once when the game opens, before the
+// player even reaches the menu. Offline → angry sponge, no text.
+// Online → no-face guy + "النت شغال كله تمام".
+//
+// navigator.onLine only means the device THINKS it has a network
+// interface (connected to Wi-Fi/data) — it says true even on a Wi-Fi
+// with no real internet (captive portal, dead router, blocked DNS),
+// so it's not enough on its own to claim "النت شغال كله تمام". The
+// "all good" message now only appears once a real network request
+// actually succeeds.
+(function () {
+  const overlay = document.getElementById("connCheckOverlay");
+  const img = document.getElementById("connCheckImg");
+  const text = document.getElementById("connCheckText");
+  if (!overlay || !img || !text) return;
+
+  function showOffline() {
+    img.src = "conn-offline.png";
+    img.alt = "";
+    text.classList.add("hidden");
+  }
+  function showOnline() {
+    img.src = "conn-online.png";
+    img.alt = "";
+    text.textContent = "النت شغال كله تمام ✅";
+    text.classList.remove("hidden");
+  }
+
+  async function reallyOnline() {
+    if (!navigator.onLine) return false; // quick disqualify — no interface at all
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
+      // no-cors: we can't read the response, we only care whether the
+      // request actually reaches somewhere and comes back at all.
+      await fetch("https://www.gstatic.com/generate_204", {
+        mode: "no-cors", cache: "no-store", signal: controller.signal
+      });
+      clearTimeout(timer);
+      return true;
+    } catch (e) {
+      return false; // timed out, DNS failed, connection refused, etc.
+    }
+  }
+
+  showOffline(); // safest default while checking — never claim "all good" before it's actually confirmed
+  overlay.classList.remove("hidden");
+
+  let dismissed = false;
+  function dismiss() {
+    if (dismissed) return;
+    dismissed = true;
+    overlay.classList.add("hidden");
+    overlay.removeEventListener("click", dismiss);
+  }
+  overlay.addEventListener("click", dismiss);
+
+  reallyOnline().then((ok) => {
+    if (ok) showOnline();
+    setTimeout(dismiss, ok ? 1400 : 900);
+  });
+  setTimeout(dismiss, 4200); // hard safety cap regardless of how the check goes
+})();
+</script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script src="mp-lobby.js"></script>
+</body>
+</html>
